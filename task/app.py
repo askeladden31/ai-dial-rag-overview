@@ -5,6 +5,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.vectorstores import VectorStore
 from langchain_openai import AzureOpenAIEmbeddings, AzureChatOpenAI
+from openai import vector_stores, azure_endpoint, api_key
 from pydantic import SecretStr
 from task._constants import DIAL_URL, API_KEY
 
@@ -52,7 +53,14 @@ class MicrowaveRAG:
         #  - Otherwise:
         #       - Create new index
         #  Return create vectorstore
-        return None
+
+        folder_path = "microwave_faiss_index"
+
+        if os.path.exists(folder_path):
+            vectorstore = FAISS.load_local(folder_path, self.embeddings, allow_dangerous_deserialization=True)
+        else:
+            vectorstore = self._create_new_index()
+        return vectorstore
 
     def _create_new_index(self) -> VectorStore:
         print("📖 Loading text document...")
@@ -69,7 +77,20 @@ class MicrowaveRAG:
         #  5. Create vectorstore from documents
         #  6. Save indexed data locally with index name "microwave_faiss_index"
         #  7. Return created vectorstore
-        return None
+
+        file_path = "microwave_manual.txt"
+        folder_path = "microwave_faiss_index"
+
+        text_loader = TextLoader(file_path, "utf-8")
+        splitter = RecursiveCharacterTextSplitter(
+            separators=["\n\n", "\n", "."],
+            chunk_size=300,
+            chunk_overlap=50
+        )
+        documents = text_loader.load_and_split(splitter)
+        vectorstore = FAISS.from_documents(documents, self.embeddings)
+        vectorstore.save_local(folder_path, folder_path)
+        return vectorstore
 
     def retrieve_context(self, query: str, k: int = 4, score=0.3) -> str:
         """
@@ -89,6 +110,8 @@ class MicrowaveRAG:
         #       - k=k
         #       - score_threshold=score
 
+        documents = self.vectorstore.similarity_search(query, k, score_threshold=score)
+
         context_parts = []
         # TODO:
         #  Iterate through results and:
@@ -96,13 +119,18 @@ class MicrowaveRAG:
         #       - print result score
         #       - print page content
 
+        for (doc, score) in documents:
+            context_parts.append(doc.page_content)
+            print(score)
+            print(doc.page_content)
+
         print("=" * 100)
         return "\n\n".join(context_parts) # will join all chunks ion one string with `\n\n` separator between chunks
 
     def augment_prompt(self, query: str, context: str) -> str:
         print(f"\n🔗 STEP 2: AUGMENTATION\n{'-' * 100}")
 
-        augmented_prompt = None #TODO: Format USER_PROMPT with context and query
+        augmented_prompt = USER_PROMPT.format(context, query) #TODO: Format USER_PROMPT with context and query
 
         print(f"{augmented_prompt}\n{'=' * 100}")
         return augmented_prompt
@@ -117,7 +145,16 @@ class MicrowaveRAG:
         #  2. Invoke llm client with messages
         #  3. print response content
         #  4. Return response content
-        return None
+
+        messages = [
+            SystemMessage(SYSTEM_PROMPT),
+            HumanMessage(augmented_prompt)
+        ]
+
+        response = self.llm_client.invoke(messages)
+        print(response.content)
+
+        return response.content
 
 
 def main(rag: MicrowaveRAG):
@@ -130,10 +167,27 @@ def main(rag: MicrowaveRAG):
         # Step 2: Augmentation
         # Step 3: Generation
 
+        context = rag.retrieve_context(user_question)
+        augmented_prompt = rag.augment_prompt(user_question, context)
+        answer = rag.generate_answer(augmented_prompt)
+        print(answer)
+
 
 
 main(
     MicrowaveRAG(
+        AzureOpenAIEmbeddings(
+            model="text-embedding-3-small-1",
+            azure_endpoint=DIAL_URL,
+            api_key=SecretStr(API_KEY)
+        ),
+        AzureChatOpenAI(
+            temperature=0.0,
+            azure_deployment="gpt-4o",
+            azure_endpoint=DIAL_URL,
+            api_key=SecretStr(API_KEY),
+            api_versions=""
+    )
         # TODO:
         #  1. pass embeddings:
         #       - AzureOpenAIEmbeddings
