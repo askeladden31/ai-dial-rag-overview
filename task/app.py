@@ -6,6 +6,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.vectorstores import VectorStore
 from langchain_openai import AzureOpenAIEmbeddings, AzureChatOpenAI
 from openai import vector_stores, azure_endpoint, api_key
+from pathlib import Path
 from pydantic import SecretStr
 from task._constants import DIAL_URL, API_KEY
 
@@ -54,11 +55,14 @@ class MicrowaveRAG:
         #       - Create new index
         #  Return create vectorstore
 
-        folder_path = "microwave_faiss_index"
+        index_name = "microwave_faiss_index"
+        folder_path = Path(__file__).parent.parent / index_name
 
         if os.path.exists(folder_path):
-            vectorstore = FAISS.load_local(folder_path, self.embeddings, allow_dangerous_deserialization=True)
+            print(f"Loading existing index from {folder_path}")
+            vectorstore = FAISS.load_local(str(folder_path), self.embeddings, index_name, allow_dangerous_deserialization=True)
         else:
+            print("Creating new index...")
             vectorstore = self._create_new_index()
         return vectorstore
 
@@ -78,8 +82,8 @@ class MicrowaveRAG:
         #  6. Save indexed data locally with index name "microwave_faiss_index"
         #  7. Return created vectorstore
 
-        file_path = "microwave_manual.txt"
-        folder_path = "microwave_faiss_index"
+        file_path = Path(__file__).parent / "microwave_manual.txt"
+        folder_name = "microwave_faiss_index"
 
         text_loader = TextLoader(file_path, "utf-8")
         splitter = RecursiveCharacterTextSplitter(
@@ -87,9 +91,10 @@ class MicrowaveRAG:
             chunk_size=300,
             chunk_overlap=50
         )
+
         documents = text_loader.load_and_split(splitter)
         vectorstore = FAISS.from_documents(documents, self.embeddings)
-        vectorstore.save_local(folder_path, folder_path)
+        vectorstore.save_local(folder_name, folder_name)
         return vectorstore
 
     def retrieve_context(self, query: str, k: int = 4, score=0.3) -> str:
@@ -110,7 +115,7 @@ class MicrowaveRAG:
         #       - k=k
         #       - score_threshold=score
 
-        documents = self.vectorstore.similarity_search(query, k, score_threshold=score)
+        documents = self.vectorstore.similarity_search_with_relevance_scores(query=query, k=k, score_threshold=score)
 
         context_parts = []
         # TODO:
@@ -130,7 +135,7 @@ class MicrowaveRAG:
     def augment_prompt(self, query: str, context: str) -> str:
         print(f"\n🔗 STEP 2: AUGMENTATION\n{'-' * 100}")
 
-        augmented_prompt = USER_PROMPT.format(context, query) #TODO: Format USER_PROMPT with context and query
+        augmented_prompt = USER_PROMPT.format(context=context, query=query) #TODO: Format USER_PROMPT with context and query
 
         print(f"{augmented_prompt}\n{'=' * 100}")
         return augmented_prompt
@@ -186,7 +191,7 @@ main(
             azure_deployment="gpt-4o",
             azure_endpoint=DIAL_URL,
             api_key=SecretStr(API_KEY),
-            api_versions=""
+            api_version=""
     )
         # TODO:
         #  1. pass embeddings:
